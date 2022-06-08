@@ -2,13 +2,15 @@ import cv2
 import numpy as np
 import os
 import time
-
+import sys
 from pubnub.pubnub import PubNub, SubscribeListener, SubscribeCallback, PNStatusCategory
 from pubnub.pnconfiguration import PNConfiguration 
 from pubnub.exceptions import PubNubException 
 import pubnub
-#import RPi.GPIO as GPIO
+if(sys.platform != 'win32'):
+    import RPi.GPIO as GPIO
 
+# MQTT Settings
 pnconf = PNConfiguration()
 pnconf.publish_key = 'pub-c-90b929ee-3089-41e3-b543-586d409ea538'
 pnconf.subscribe_key = 'sub-c-39a4fa00-9103-4fba-867e-4614ebf67e42' 
@@ -54,25 +56,24 @@ class MySubscribeCallback(SubscribeCallback):
 
 pubnub.add_listener(MySubscribeCallback())
 pubnub.subscribe().channels('CP-IoT').execute()
+print('connected')                                           
 
 def mqtt_send(status) :
     global pubnub
     pubnub.publish().channel("CP-IoT").message({
         'status': status
     }).pn_async(my_publish_callback)
- 
-#my_listener = SubscribeListener()                           
-#pubnub.add_listener(my_listener)                              
-#pubnub.subscribe().channels(channel).execute()               
- 
-#my_listener.wait_for_connect()                               
-print('connected')                                           
   
-#pubnub.publish().channel(channel).message(data).sync()      
 
-# pub-c-90b929ee-3089-41e3-b543-586d409ea538
-# sub-c-39a4fa00-9103-4fba-867e-4614ebf67e42
+# GPIO
+def send_signal(line):
+    if(sys.platform != 'win32'):
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(line, GPIO.OUT)
+        GPIO.output(line, 0)
+        GPIO.output(line, 1)
 
+# OpenCV
 recognizer = cv2.face.LBPHFaceRecognizer_create()
 recognizer.read('trainer/trainer.yml')
 cascadePath = "haarcascade_frontalface_default.xml"
@@ -80,36 +81,26 @@ faceCascade = cv2.CascadeClassifier(cascadePath);
 
 font = cv2.FONT_HERSHEY_SIMPLEX
 
-#iniciate id counter
 id = 0
 
-# names related to ids: example ==> Marcelo: id=1,  etc
 names = ['Unknwn', 'Owner', 'Unknown'] 
 
-# Initialize and start realtime video capture
+# start video capture
 cam = cv2.VideoCapture(0)
-cam.set(3, 640) # set video widht
-cam.set(4, 480) # set video height
+cam.set(3, 640) 
+cam.set(4, 480)
 
-# Define min window size to be recognized as a face
+# Define min window size
 minW = cam.get(3)
 minH = cam.get(4)
 
 t1 = time.time()
 id_list = []
-#if True:
 while True:
     ret, img =cam.read()
-    #img = cv2.flip(img, -1) # Flip vertically
-    #img = cv2.imread('dataset/1_5.jpg')
     gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     
-    faces = faceCascade.detectMultiScale( 
-        img,
-        #scaleFactor = 1.2,
-        #minNeighbors = 5,
-        #minSize = (640, 480),
-       )
+    faces = faceCascade.detectMultiScale(img)
 
     for(x,y,w,h) in faces:
         cv2.rectangle(img, (x,y), (x+w,y+h), (0,255,0), 2)
@@ -136,7 +127,7 @@ while True:
     if k == 27:
         break
 
-# Do a bit of cleanup
+# Do cleanup
 cam.release()
 cv2.destroyAllWindows()
 
@@ -148,9 +139,13 @@ for id in id_list:
     else:
         count_unknown +=1
 
+# Results
+signal_lines = {'Red': 21, 'Green':17}
 if(count_correct >= 10):
     print(' ===== ALLOWED to ENTER ===== ')
     mqtt_send('success to enter')
+    send_signal(signal_lines['Green'])
 else:
     print(' ===== NOT Allowed ===== ')
     mqtt_send('entry denied')
+    send_signal(signal_lines['Red'])
